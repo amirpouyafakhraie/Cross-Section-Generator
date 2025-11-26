@@ -1,0 +1,103 @@
+import pandas as pd
+
+# -----------------------------
+# CONFIG (edit these as needed)
+# -----------------------------
+INPUT_FILE = "Cross Section (INPUT).xlsx"
+OUTPUT_FILE = "Cross Section (OUTPUT)_generated.xlsx"
+
+HPG_VALUE = 105                 # fixed H.P.G (matches your template)
+LINING_CONCRETE_THICKNESS = 0.055  # constant lining thickness
+LEAN_THICKNESS = 0.06           # constant lean thickness (from your template)
+
+# -----------------------------
+# TYPE CLASSIFICATION
+# -----------------------------
+def classify_type(width, height):
+    w = float(width)
+    h = float(height)
+
+    if h > 2:
+        return "TYPE5"
+    if w > 0.7 and h <= 2:
+        return "TYPE3"
+    if w in (0.6, 0.7) and h <= 1:
+        return "TYPE2"
+    if w in (0.4, 0.5) and h <= 1:
+        return "TYPE1"
+    if w in (0.4, 0.5, 0.6, 0.7) and 1 < h <= 1.5:
+        return "TYPE2"
+    if w in (0.4, 0.5, 0.6, 0.7) and 1.5 < h <= 2:
+        return "TYPE3"
+    return "UNDEFINED"
+
+# -----------------------------
+# MAIN CONVERSION
+# -----------------------------
+def convert_excel(input_path, output_path):
+    # 1) Read input Excel
+    try:
+        df = pd.read_excel(input_path)
+    except FileNotFoundError:
+        raise SystemExit(f"Input file not found: {input_path}")
+
+    # 2) Drop columns B, C, D, J by name (if present)
+    cols_to_drop = ["Scenario", "Timestep", "Label", "Notes"]
+    df = df.drop(columns=[c for c in cols_to_drop if c in df.columns], errors="ignore")
+
+    # Basic validation for required columns
+    required = ["Element", "Elevation (Ground)", "Elevation (Invert)", "Bottom Width"]
+    missing = [c for c in required if c not in df.columns]
+    if missing:
+        raise SystemExit(f"Missing required columns in input: {missing}")
+
+    # 3) New columns (I, J, K, L in your description)
+    df[" Width"] = df["Bottom Width"]               # exact name with space to match your template
+    df["H.P.G"] = HPG_VALUE
+    # Height = H.P.G - Elevation (Invert) + Lining Concrete thickness
+    df["Height"] = (df["Elevation (Ground)"] - df["Elevation (Invert)"] + LINING_CONCRETE_THICKNESS).round(2)
+
+    # 4) Type rules
+    df["Type"] = [classify_type(w, h) for w, h in zip(df[" Width"], df["Height"])]
+
+    # 5) Thickness rules
+    # TYPE1/TYPE2 -> 0.15, TYPE3/TYPE5 -> 0.20
+    df["Thickness of Wall"] = df["Type"].map({
+        "TYPE1": 0.15, "TYPE2": 0.15,
+        "TYPE3": 0.20, "TYPE5": 0.20
+    })
+    df["Thickness of Slab"] = df["Thickness of Wall"]
+    df["Thickness of Lean"] = LEAN_THICKNESS
+
+    # 6) Make sure X/Y exist (some inputs might not have them)
+    for c in ["X", "Y"]:
+        if c not in df.columns:
+            df[c] = None
+
+    # 7) Reorder to match your OUTPUT layout exactly
+    output_cols = [
+        "Element",
+        "X",
+        "Y",
+        "Elevation (Ground)",
+        "Elevation (Invert)",
+        " Width",
+        "H.P.G",
+        "Height",
+        "Type",
+        "Thickness of Wall",
+        "Thickness of Slab",
+        "Thickness of Lean"
+    ]
+    df_out = df[output_cols]
+
+    # 8) Save
+    df_out.to_excel(output_path, index=False)
+    print("✅ Done.")
+    print(f"📁 Saved: {output_path}")
+
+# -----------------------------
+# RUN
+# -----------------------------
+if __name__ == "__main__":
+    convert_excel(INPUT_FILE, OUTPUT_FILE)
